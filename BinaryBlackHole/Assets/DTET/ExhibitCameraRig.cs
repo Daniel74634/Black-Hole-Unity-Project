@@ -5,7 +5,7 @@ using UnityEngine.InputSystem;
 
 namespace DTET.VisualPrototype
 {
-    /// <summary>Desktop observation rig. Commands can be reused by a future tracked XR rig.</summary>
+    /// <summary>Virtual visitor/head pose emulator. The exhibit and world UI do not have a desktop layout.</summary>
     public sealed class ExhibitCameraRig : MonoBehaviour
     {
         public enum ObservationTarget { Binary, BodyA, BodyB }
@@ -13,16 +13,25 @@ namespace DTET.VisualPrototype
 
         public const float MinimumDistance = 1.4f;
         public const float MaximumDistance = 36f;
+        public const float DefaultDistance = 9f;
+        public static readonly Vector3 LearningBoardPosition = new Vector3(3.4f, 2f, 3f);
+        public event System.Action PoseRelocated;
+        public bool EmulatedInputEnabled { get; set; } = true;
+        public bool PersistInputSettings { get; set; } = true;
+        private const string LookPreference = "DTET.Observer.LookSensitivity.v1";
+        private const string ScrollPreference = "DTET.Observer.ScrollSensitivity.v1";
+        private readonly ObserverInputSettings inputSettings = new ObserverInputSettings();
+        public float LookSensitivity => inputSettings.Look;
+        public float ScrollSensitivity => inputSettings.Scroll;
         private static readonly Vector3 ExhibitCentre = new Vector3(-3.25f, 0, 0);
         private readonly List<RaycastResult> pointerHits = new List<RaycastResult>();
         private Camera view;
         private Transform bodyA;
         private Transform bodyB;
-        private Transform background;
         private Vector3 pan;
         private float yaw;
         private float elevation = 25f;
-        private float distance = 13.5f;
+        private float distance = DefaultDistance;
         private float flyYaw;
         private float flyPitch;
         private bool rotating;
@@ -37,12 +46,13 @@ namespace DTET.VisualPrototype
             ? "FREE FLIGHT  |  F returns to the binary"
             : "ORBIT  /  " + (Target == ObservationTarget.Binary ? "BINARY" : Target == ObservationTarget.BodyA ? "BODY A" : "BODY B") + "  |  wheel or +/- moves closer / farther";
 
-        public void Initialize(Camera camera, Transform firstBody, Transform secondBody, Transform stars)
+        public void Initialize(Camera camera, Transform firstBody, Transform secondBody)
         {
             view = camera;
             bodyA = firstBody;
             bodyB = secondBody;
-            background = stars;
+            inputSettings.SetLook(PlayerPrefs.GetFloat(LookPreference, ObserverInputSettings.DefaultLook));
+            inputSettings.SetScroll(PlayerPrefs.GetFloat(ScrollPreference, ObserverInputSettings.DefaultScroll));
             view.orthographic = false;
             view.fieldOfView = 50f;
             view.nearClipPlane = 0.05f;
@@ -61,10 +71,33 @@ namespace DTET.VisualPrototype
             FreeFlight = false;
             Target = ObservationTarget.Binary;
             pan = Vector3.zero;
-            distance = 13.5f;
+            distance = DefaultDistance;
             yaw = preset == ViewPreset.Side ? 65f : 0f;
-            elevation = preset == ViewPreset.Above ? 85f : preset == ViewPreset.Side ? 2f : 25f;
+            elevation = preset == ViewPreset.Above ? 85f : preset == ViewPreset.Side ? 2f : 12f;
             ApplyOrbitPose();
+            ToggleFlight();
+            PoseRelocated?.Invoke();
+        }
+
+        public void FocusInformation() => Relocate(new Vector3(1.3f, 1.5f, -2.8f), new Vector3(1.3f, 1.5f, 0));
+        public void FocusClockComparison() => Relocate(new Vector3(4f, 2.1f, -3f), new Vector3(4f, 2.1f, 0));
+        public void AlignForLensing(Transform lens, Transform source)
+        {
+            if (lens == null || source == null) return;
+            var direction = (source.position - lens.position).normalized;
+            // A slight off-axis view avoids the artistic disk covering all aligned point images.
+            Relocate(lens.position - direction * 8f + Vector3.up * 0.35f, lens.position);
+        }
+        public void FocusLearning() => Relocate(LearningBoardPosition + new Vector3(0, 0, -4.6f), LearningBoardPosition);
+
+        private void Relocate(Vector3 position, Vector3 lookAt)
+        {
+            FreeFlight = true;
+            transform.SetPositionAndRotation(position, Quaternion.LookRotation(lookAt - position, Vector3.up));
+            flyYaw = transform.eulerAngles.y;
+            flyPitch = Mathf.DeltaAngle(0f, transform.eulerAngles.x);
+            rotating = panning = false;
+            PoseRelocated?.Invoke();
         }
 
         public void Focus(ObservationTarget target)
@@ -72,8 +105,9 @@ namespace DTET.VisualPrototype
             Target = target;
             FreeFlight = false;
             pan = Vector3.zero;
-            distance = target == ObservationTarget.Binary ? 13.5f : 4.2f;
+            distance = target == ObservationTarget.Binary ? DefaultDistance : 4.2f;
             ApplyOrbitPose();
+            PoseRelocated?.Invoke();
         }
 
         public void ToggleFlight()
@@ -96,6 +130,7 @@ namespace DTET.VisualPrototype
                 }
                 pan = Vector3.zero;
                 ApplyOrbitPose();
+                PoseRelocated?.Invoke();
             }
         }
 
@@ -103,12 +138,41 @@ namespace DTET.VisualPrototype
         {
             if (!float.IsFinite(steps)) return;
             if (FreeFlight)
-                MoveLocal(new Vector3(0, 0, steps * 0.8f));
+                MoveLocal(new Vector3(0, 0, Mathf.Clamp(steps, -20f, 20f) * 0.8f * ScrollSensitivity));
             else
             {
-                distance = Mathf.Clamp(distance * Mathf.Exp(-Mathf.Clamp(steps, -20f, 20f) * 0.12f), MinimumDistance, MaximumDistance);
+                distance = Mathf.Clamp(distance * Mathf.Exp(-Mathf.Clamp(steps, -20f, 20f) * 0.12f * ScrollSensitivity), MinimumDistance, MaximumDistance);
                 ApplyOrbitPose();
             }
+        }
+
+        public void Look(Vector2 pixelDelta)
+        {
+            if (!float.IsFinite(pixelDelta.x) || !float.IsFinite(pixelDelta.y)) return;
+            Rotate(pixelDelta * (0.18f * LookSensitivity));
+        }
+
+        public void SetLookSensitivity(float value)
+        {
+            if (inputSettings.SetLook(value) && PersistInputSettings)
+                PlayerPrefs.SetFloat(LookPreference, LookSensitivity);
+        }
+
+        public void SetScrollSensitivity(float value)
+        {
+            if (inputSettings.SetScroll(value) && PersistInputSettings)
+                PlayerPrefs.SetFloat(ScrollPreference, ScrollSensitivity);
+        }
+
+        public void ResetInputSensitivities()
+        {
+            SetLookSensitivity(ObserverInputSettings.DefaultLook);
+            SetScrollSensitivity(ObserverInputSettings.DefaultScroll);
+        }
+
+        public void SaveInputSettings()
+        {
+            if (PersistInputSettings) PlayerPrefs.Save();
         }
 
         public void Rotate(Vector2 delta)
@@ -143,12 +207,12 @@ namespace DTET.VisualPrototype
 
         public void SetLearningViewport(bool visible)
         {
-            view.rect = visible ? new Rect(0, 0, 0.68f, 1) : new Rect(0, 0, 1, 1);
+            view.rect = new Rect(0, 0, 1, 1);
         }
 
         private void Update()
         {
-            if (view == null) return;
+            if (view == null || !EmulatedInputEnabled) return;
             var keyboard = Keyboard.current;
             var mouse = Mouse.current;
             if (keyboard != null)
@@ -165,12 +229,12 @@ namespace DTET.VisualPrototype
             }
             if (mouse == null) return;
             var overUi = IsOverUi(mouse.position.ReadValue());
-            if (mouse.rightButton.wasPressedThisFrame) rotating = !overUi;
+            if (mouse.rightButton.wasPressedThisFrame) rotating = FreeFlight || !overUi;
             if (mouse.middleButton.wasPressedThisFrame) panning = !overUi;
             if (!mouse.rightButton.isPressed) rotating = false;
             if (!mouse.middleButton.isPressed) panning = false;
             var delta = mouse.delta.ReadValue();
-            if (rotating) Rotate(delta * 0.18f);
+            if (rotating) Look(delta);
             if (panning)
             {
                 var scale = (FreeFlight ? 8f : distance) * 0.0015f;
@@ -195,7 +259,6 @@ namespace DTET.VisualPrototype
         {
             if (view == null) return;
             if (!FreeFlight) ApplyOrbitPose();
-            if (background != null) background.position = transform.position;
         }
 
         private void ApplyOrbitPose()
@@ -209,7 +272,13 @@ namespace DTET.VisualPrototype
 
         private void OnApplicationFocus(bool focused)
         {
-            if (!focused) rotating = panning = false;
+            if (!focused)
+            {
+                rotating = panning = false;
+                SaveInputSettings();
+            }
         }
+
+        private void OnApplicationQuit() => SaveInputSettings();
     }
 }

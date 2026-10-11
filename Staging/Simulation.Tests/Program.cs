@@ -97,3 +97,8 @@ foreach (Action invalid in new Action[] {
 }
 Check(session.Scenario.Id == StagingScenarios.Wider.Id, "invalid scenario leaves recoverable state");
 Console.WriteLine("PASS: staging model, graph, clock, scenario, cutoff, snapshot and validation checks");
+RelativityClockTests.Run();
+AdmObserverTests.Run();
+ThinLensTests.Run();
+ObserverInputSettingsTests.Run();
+StoryboardChoreographyTests.Run();

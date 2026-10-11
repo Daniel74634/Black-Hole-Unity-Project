@@ -7,5 +7,10 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Simulation/BlackHole.Staging.Simulation.csproj" />
+    <Compile Include="../../BinaryBlackHole/Assets/DTET/RelativityClockSnapshot.cs" Link="RelativityClockSnapshot.cs" />
+    <Compile Include="../../BinaryBlackHole/Assets/DTET/AdmObserverPhysics.cs" Link="AdmObserverPhysics.cs" />
+    <Compile Include="../../BinaryBlackHole/Assets/DTET/ThinLensModel.cs" Link="ThinLensModel.cs" />
+    <Compile Include="../../BinaryBlackHole/Assets/DTET/ObserverInputSettings.cs" Link="ObserverInputSettings.cs" />
+    <Compile Include="../../BinaryBlackHole/Assets/DTET/StoryboardChoreography.cs" Link="StoryboardChoreography.cs" />
   </ItemGroup>
 </Project>
